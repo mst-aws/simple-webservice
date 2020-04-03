@@ -1,0 +1,80 @@
+version: 0.2
+env:
+  variables:
+    STAGE: "Build"
+  # key: "value"
+  #parameter-s tore:
+  # key: "value"
+# key: "value"
+#git-credential-helper: yes
+
+phases:
+  install:
+    #If you use the Ubuntu standard image 2.0 or later, you must specify runtime-versions.
+    #If you specify runtime-versions and use an image other than Ubuntu standard image 2.0, the build fails.
+    runtime-versions:
+      java: openjdk11
+      # name: version
+    commands:
+      - curl -sS -o aws-iam-authenticator https://amazon-eks.s3-us-west-2.amazonaws.com/1.10.3/2018-07-26/bin/linux/amd64/aws-iam-authenticator
+      - curl -sS -o kubectl https://amazon-eks.s3-us-west-2.amazonaws.com/1.14.6/2019-08-22/bin/linux/amd64/kubectl
+      - chmod +x ./kubectl ./aws-iam-authenticator
+      - export PATH=$PWD/:$PATH
+      - apt-get update && apt-get -y install jq python3-pip python3-dev && pip3 install --upgrade awscli
+      - echo Using Openjdk11 for build runtime environment...
+      # - command
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - $(aws ecr get-login --no-include-email)
+      - export KUBECONFIG=$HOME/.kube/config
+      # - command
+  build:
+    commands:
+      - |
+        if [ $STAGE = "Build" ]; then
+          echo Building the Docker image...
+          mvn clean install dockerfile:build -Drepo.uri=${REPOSITORY_URI}
+        else
+          echo Skipping Build Step...
+        fi
+      # - command
+  post_build:
+    commands:
+      - |
+        if [ $STAGE = "Build" ]; then
+          echo Taging Docker image with version ${CODEBUILD_RESOLVED_SOURCE_VERSION} ...
+          docker tag ${REPOSITORY_URI}:latest ${REPOSITORY_URI}:${CODEBUILD_RESOLVED_SOURCE_VERSION}
+          echo Pushing Docker Image...
+          docker push ${REPOSITORY_URI}:${CODEBUILD_RESOLVED_SOURCE_VERSION}
+        else
+          echo Skipping Docker Push Step...
+        fi
+
+      - echo Getting STS Credentials for role $EKS_DEPLOYER_ROLE_ARN
+      - CREDENTIALS=$(aws sts assume-role --role-arn $EKS_DEPLOYER_ROLE_ARN --role-session-name codebuild-deployer --duration-seconds 900)
+      - export AWS_ACCESS_KEY_ID="$(echo ${CREDENTIALS} | jq -r '.Credentials.AccessKeyId')"
+      - export AWS_SECRET_ACCESS_KEY="$(echo ${CREDENTIALS} | jq -r '.Credentials.SecretAccessKey')"
+      - export AWS_SESSION_TOKEN="$(echo ${CREDENTIALS} | jq -r '.Credentials.SessionToken')"
+      - export AWS_EXPIRATION=$(echo ${CREDENTIALS} | jq -r '.Credentials.Expiration')
+
+      - echo Updating kube config...
+      - aws eks update-kubeconfig --name $EKS_CLUSTER_NAME
+      - sed -i 's@CONTAINER_IMAGE@'"$REPOSITORY_URI:$CODEBUILD_RESOLVED_SOURCE_VERSION"'@' $CODEBUILD_SRC_DIR/k8s/deployment.yaml
+      - cat $CODEBUILD_SRC_DIR/k8s/deployment.yaml
+      - echo Executing Service...
+      - kubectl apply -f $CODEBUILD_SRC_DIR/k8s/service.yaml
+      - echo Deploying...
+      - kubectl apply -f $CODEBUILD_SRC_DIR/k8s/deployment.yaml
+      - echo Deployment Status
+      - kubectl get all
+    #artifacts:
+    #files:
+    # - location
+    # - location
+    #name: $(date +%Y-%m-%d)
+    #discard-paths: yes
+    #base-directory: location
+    #cache:
+    #paths:
+    # - paths

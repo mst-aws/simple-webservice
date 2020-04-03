@@ -1,0 +1,19 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: java-webservice-deployment
+  namespace: default
+spec:
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: java-webservice
+    spec:
+      containers:
+        - image: CONTAINER_IMAGE
+          imagePullPolicy: Always
+          name: java-webservice
+          ports:
+            - containerPort: 8080
+
